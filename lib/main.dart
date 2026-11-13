@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   runApp(const ScannerApp());
@@ -54,6 +55,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final List<ScanEntry> _history = [];
+  String _searchQuery = '';
   static const String _prefsKey = 'scan_history';
 
   @override
@@ -82,7 +84,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _addEntry(String value, String type) async {
     setState(() {
-      _history.insert(0, ScanEntry(value: value, type: type, time: DateTime.now()));
+      _history.insert(0, ScanEntry(value: value, type: type));
     });
     await _saveHistory();
   }
@@ -105,8 +107,89 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _openLink(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri != null && await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось открыть ссылку')),
+      );
+    }
+  }
+
+  bool _isUrl(String text) {
+    final uri = Uri.tryParse(text);
+    return uri != null && (uri.scheme == 'http' || uri.scheme == 'https') && uri.host.isNotEmpty;
+  }
+
+  // Окно с деталями кода
+  void _showDetails(ScanEntry entry) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        final isUrl = _isUrl(entry.value);
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+            left: 20, right: 20, top: 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Детали кода', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              SelectableText(
+                entry.value, 
+                style: const TextStyle(fontSize: 18),
+              ),
+              const SizedBox(height: 8),
+              Text('Тип: ${entry.type}', style: const TextStyle(color: Colors.grey)),
+              Text('Время: ${_formatTime(entry.time)}', style: const TextStyle(color: Colors.grey)),
+              const SizedBox(height: 24),
+              
+              if (isUrl)
+                FilledButton.icon(
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Открыть ссылку в браузере'),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _openLink(entry.value);
+                  },
+                ),
+              if (isUrl) const SizedBox(height: 12),
+              
+              FilledButton.tonalIcon(
+                icon: const Icon(Icons.copy),
+                label: const Text('Скопировать'),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: entry.value));
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Скопировано')),
+                  );
+                },
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final filteredHistory = _history
+        .where((e) => e.value.toLowerCase().contains(_searchQuery.toLowerCase()))
+        .toList();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Сканер кодов'),
@@ -119,52 +202,79 @@ class _HomePageState extends State<HomePage> {
             ),
         ],
       ),
-      body: _history.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.qr_code_scanner,
-                      size: 96, color: Colors.indigo.withValues(alpha: 0.4)),
-                  const SizedBox(height: 16),
-                  const Text('История пуста',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  const Text('Нажмите «Сканировать», чтобы начать',
-                      style: TextStyle(color: Colors.grey)),
-                ],
-              ),
-            )
-          : ListView.separated(
-              padding: const EdgeInsets.all(12),
-              itemCount: _history.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (context, i) {
-                final e = _history[i];
-                return Card(
-                  margin: EdgeInsets.zero,
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: Colors.indigo.withValues(alpha: 0.1),
-                      child: const Icon(Icons.qr_code, color: Colors.indigo),
-                    ),
-                    title: Text(e.value,
-                        maxLines: 2, overflow: TextOverflow.ellipsis),
-                    subtitle: Text('${e.type} · ${_formatTime(e.time)}'),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.copy),
-                      tooltip: 'Копировать',
-                      onPressed: () {
-                        Clipboard.setData(ClipboardData(text: e.value));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Скопировано')),
-                        );
-                      },
-                    ),
+      body: Column(
+        children: [
+          if (_history.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              child: TextField(
+                decoration: InputDecoration(
+                  hintText: 'Поиск по истории...',
+                  prefixIcon: const Icon(Icons.search),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                );
-              },
+                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                ),
+                onChanged: (val) {
+                  setState(() => _searchQuery = val);
+                },
+              ),
             ),
+          Expanded(
+            child: filteredHistory.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.qr_code_scanner,
+                            size: 96, color: Colors.indigo.withValues(alpha: 0.4)),
+                        const SizedBox(height: 16),
+                        Text(
+                          _history.isEmpty ? 'История пуста' : 'Ничего не найдено',
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: filteredHistory.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, i) {
+                      final e = filteredHistory[i];
+                      final isUrl = _isUrl(e.value);
+                      
+                      return Card(
+                        margin: EdgeInsets.zero,
+                        child: ListTile(
+                          onTap: () => _showDetails(e), // Нажатие на карточку
+                          leading: CircleAvatar(
+                            backgroundColor: Colors.indigo.withValues(alpha: 0.1),
+                            child: Icon(
+                              isUrl ? Icons.link : Icons.qr_code, 
+                              color: Colors.indigo
+                            ),
+                          ),
+                          title: Text(e.value, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: Text('${e.type} · ${_formatTime(e.time)}'),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.copy),
+                            tooltip: 'Копировать',
+                            onPressed: () {
+                              Clipboard.setData(ClipboardData(text: e.value));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Скопировано')),
+                              );
+                            },
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _openScanner,
         icon: const Icon(Icons.qr_code_scanner),
@@ -240,20 +350,6 @@ class _ScannerPageState extends State<ScannerPage> {
                   border: Border.all(color: Colors.white, width: 3),
                   borderRadius: BorderRadius.circular(16),
                 ),
-              ),
-            ),
-          ),
-          const Positioned(
-            bottom: 32,
-            left: 0,
-            right: 0,
-            child: Text(
-              'Поместите код в рамку',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                shadows: [Shadow(blurRadius: 8, color: Colors.black54)],
               ),
             ),
           ),
