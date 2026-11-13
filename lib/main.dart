@@ -30,7 +30,7 @@ class ScanEntry {
   final String type;
   final DateTime time;
 
-  ScanEntry({required this.value, required this.type, required this.time});
+  ScanEntry({required this.value, required this.type, DateTime? time}) : time = time ?? DateTime.now();
 
   Map<String, dynamic> toJson() => {
         'value': value,
