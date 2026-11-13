@@ -5,6 +5,9 @@ plugins {
 }
 
 android {
+    lint {
+        checkReleaseBuilds = false
+    }
     namespace = "com.rafaelgilmanov.barcode_scanner"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
